@@ -1,137 +1,146 @@
-
-# EcoLedger App v1.7.2 – full code (~330 lines)
 import streamlit as st
-from streamlit_option_menu import option_menu
-import pandas as pd, io, json
-from datetime import datetime
+import pandas as pd
+import plotly.express as px
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
 
-# === Theme ===
-BRAND = "#198754"; NAVY = "#1B2A4E"; BG = "#F4F6FA"
-st.set_page_config(page_title="EcoLedger", page_icon="🌿", layout="wide")
-st.markdown(f"""<style>
-body{{background:{BG};}}
-header{{background:#fff;border-bottom:1px solid #e5e5e5;}}
-[data-testid=collapsedControl]{{display:none}}
-section[data-testid=stSidebar]>div:first-child{{background:{NAVY};color:#fff;width:260px}}
-.stButton>button,.stDownloadButton>button{{background:{BRAND};color:#fff;border:none;border-radius:6px;padding:6px 14px;}}
-thead tr th:first-child,tbody th{{display:none}}
-</style>""", unsafe_allow_html=True)
+# ------------------- Auth & Session -------------------
 
-# === Factors ===
-EF = {
-    "electricity_kwh": 0.43, "diesel_litre": 2.68, "petrol_litre": 2.31,
-    "r134a_kg": 1430.0, "r410a_kg": 2088.0,
-    "paper_kg": 1.3, "water_m3": 0.344,
-    "business_air_domestic_km": 0.27, "business_air_longhaul_km": 0.15, "taxi_km": 0.251,
-    "waste_landfill_kg": 1.9, "waste_incineration_kg": 2.5,
-    "employee_commute_km": 0.15,
-}
-SCOPE_CATS = {1:["Fuel","Refrigerants"], 2:["Energy"], 3:["Paper","Water","Business travel","Waste disposal","Employee commute"]}
-VEH = {"Petrol":"petrol_litre", "Diesel":"diesel_litre"}
-REF = {"R-134a":"r134a_kg", "R-410a":"r410a_kg"}
-TRV = {"Domestic air":"business_air_domestic_km", "Long-haul air":"business_air_longhaul_km", "Taxi":"taxi_km"}
-WST = {"Landfill":"waste_landfill_kg", "Incineration":"waste_incineration_kg"}
-INT = {"area":200, "occ":1000}
-PREM = {"Office":200, "Retail":300, "Warehouse":90}
-IND = ["Services","Banking","Hospitality","Manufacturing","Healthcare","Retail"]
+def login():
+    st.title("Eco Ledger Login")
+    email = st.text_input("Email")
+    password = st.text_input("Password", type="password")
+    if st.button("Login"):
+        st.session_state["authenticated"] = True
+        st.experimental_rerun()
 
-# === Helpers ===
-def add_row(r: pd.DataFrame):
-    st.session_state.df = pd.concat([st.session_state.df, r], ignore_index=True)
+# ------------------- Company Profile -------------------
 
-def enrich(df):
-    d=df.copy(); d["ef"]=d.activity_code.map(EF); d["kgCO2e"]=d.quantity*d.ef; d["tCO2e"]=d.kgCO2e/1e3; return d
+def company_profile():
+    st.title("Company Profile")
+    with st.form("profile_form"):
+        name = st.text_input("Company Name")
+        industry = st.selectbox("Industry", ["Manufacturing", "Services", "Retail", "Energy"])
+        size = st.radio("Company Size", ["Small", "Medium", "Large", "Enterprise"])
+        country = st.selectbox("Country", ["UAE", "Saudi Arabia", "Qatar", "Kuwait", "Bahrain", "Oman"])
+        city = st.text_input("City")
+        area = st.text_input("Area")
+        year = st.selectbox("Reporting Year", list(range(2015, 2026)))
+        submitted = st.form_submit_button("Save Profile")
+        if submitted:
+            st.session_state["company"] = {
+                "name": name, "industry": industry, "size": size,
+                "country": country, "city": city, "area": area, "year": year
+            }
+            st.success("Profile Saved")
 
-def export(side=False):
-    res=enrich(st.session_state.df); buf=io.BytesIO(); res.to_csv(buf,index=False)
-    meta={"company":st.session_state.co,"industry":st.session_state.ind,"year":st.session_state.yr}
-    js=json.dumps({**meta,"generated":datetime.utcnow().isoformat(), "activities":res.to_dict("records")}, indent=2)
-    st.download_button("CSV",buf.getvalue(),"results.csv",key=("csv_side" if side else "csv_main"))
-    st.download_button("JSON",js,"report.json",key=("json_side" if side else "json_main"))
+# ------------------- Data Input -------------------
 
-# === Session defaults ===
-for k,v in {"df":pd.DataFrame(),"co":"ACME","ind":IND[0],"yr":2025,"scope":2}.items(): st.session_state.setdefault(k,v)
+def input_scope(scope):
+    st.title(f"Scope {scope} Emissions Input")
+    tab1, tab2, tab3 = st.tabs(["Manual Entry", "Upload File", "Estimation Wizard"])
 
-# === Sidebar ===
-with st.sidebar:
-    st.title("🌿 EcoLedger")
-    page=option_menu("Dashboards",["Data Input","Results"],icons=["pencil-fill","bar-chart-fill"],default_index=0,
-        styles={"container":{"background":NAVY},"icon":{"color":"#fff"},"nav-link":{"color":"#cfd3ec"},"nav-link-selected":{"background":"#25345d","color":"#fff"}})
-    st.markdown("---")
-    if not st.session_state.df.empty: export(side=True)
+    with tab1:
+        st.subheader("Manual Data Entry")
+        df = st.data_editor(pd.DataFrame({
+            "Activity Type": ["Diesel"],
+            "Unit": ["liters"],
+            "Quantity": [0],
+            "Emission Factor": [2.68],
+        }), num_rows="dynamic")
+        if st.button(f"Calculate Scope {scope}"):
+            df["CO2e"] = df["Quantity"] * df["Emission Factor"]
+            st.session_state[f"scope{scope}_data"] = df
+            st.success("Calculated Successfully")
 
-# === Data Input Page ===
-if page=="Data Input":
-    st.header("Company meta")
-    st.text_input("Company",key="co")
-    st.selectbox("Industry",IND,key="ind")
-    st.number_input("Reporting year",step=1,key="yr")
-    st.divider()
+    with tab2:
+        uploaded = st.file_uploader("Upload Excel/CSV")
+        if uploaded:
+            data = pd.read_csv(uploaded) if uploaded.name.endswith(".csv") else pd.read_excel(uploaded)
+            st.session_state[f"scope{scope}_data"] = data
+            st.dataframe(data)
 
-    st.selectbox("Scope",[1,2,3],key="scope"); scope=st.session_state.scope
-    cat=st.selectbox("Category",SCOPE_CATS[scope])
+    with tab3:
+        st.markdown("Coming soon: Select benchmarks for estimation")
 
-    if scope==1 and cat=="Fuel":
-        f=st.selectbox("Fuel",list(VEH)); econ=st.number_input("L/100km",0.0); km=st.number_input("km/yr",0.0); fleet=st.number_input("Fleet",1,step=1)
-        if st.button("Add fleet") and all(x>0 for x in [econ,km,fleet]):
-            add_row(pd.DataFrame([{"activity_code":VEH[f],"quantity":km*econ/100*fleet,"unit":"litre","scope":1,"quality":"Measured – fleet"}]))
-    elif scope==1 and cat=="Refrigerants":
-        r=st.selectbox("Gas",list(REF)); kg=st.number_input("kg",0.0)
-        if st.button("Add gas") and kg>0:
-            add_row(pd.DataFrame([{"activity_code":REF[r],"quantity":kg,"unit":"kg","scope":1,"quality":"Measured"}]))
-    elif scope==2:
-        if cat=="Energy":
-            kwh=st.number_input("Measured kWh",0.0)
-            if st.button("Add kWh") and kwh>0:
-                add_row(pd.DataFrame([{"activity_code":"electricity_kwh","quantity":kwh,"unit":"kWh","scope":2,"quality":"Measured"}]))
-            st.markdown("### Estimate via proxy")
-            proxy=st.selectbox("Proxy",["Floor area","Occupants","Bulk kW","Premise type","Appliance list"])
-            kw=None
-            if proxy=="Floor area":
-                area=st.number_input("m²",0.0)
-                if st.button("Add area") and area>0: kw=area*INT["area"]
-            elif proxy=="Occupants":
-                occ=st.number_input("People",0.0)
-                if st.button("Add occ") and occ>0: kw=occ*INT["occ"]
-            elif proxy=="Bulk kW":
-                tot=st.number_input("kW total",0.0); hrs=st.number_input("Hours",0.0)
-                if st.button("Add bulk") and tot>0 and hrs>0: kw=tot*hrs
-            elif proxy=="Premise type":
-                p=st.selectbox("Prem",list(PREM)); area=st.number_input("Area",0.0)
-                if st.button("Add premise") and area>0: kw=area*PREM[p]
-            else:
-                units=st.number_input("Units",0,step=1); kwu=st.number_input("kW/unit",0.0); hrs=st.number_input("Hours",0.0)
-                if st.button("Add appl") and units>0 and kwu>0 and hrs>0: kw=units*kwu*hrs
-            if kw: add_row(pd.DataFrame([{"activity_code":"electricity_kwh","quantity":kw,"unit":"kWh","scope":2,"quality":"Estimated – proxy"}]))
-    elif scope==3:
-        if cat=="Business travel":
-            mode=st.selectbox("Mode",list(TRV)); km=st.number_input("km",0.0)
-            if st.button("Add travel") and km>0:
-                add_row(pd.DataFrame([{"activity_code":TRV[mode],"quantity":km,"unit":"km","scope":3,"quality":"Measured"}]))
-        elif cat=="Waste disposal":
-            route=st.selectbox("Route",list(WST)); kg=st.number_input("kg",0.0)
-            if st.button("Add waste") and kg>0:
-                add_row(pd.DataFrame([{"activity_code":WST[route],"quantity":kg,"unit":"kg","scope":3,"quality":"Measured"}]))
-        elif cat=="Employee commute":
-            emp=st.number_input("Employees",1,step=1); km_emp=st.number_input("km/emp/yr",0.0)
-            if st.button("Add commute") and km_emp>0:
-                add_row(pd.DataFrame([{"activity_code":"employee_commute_km","quantity":emp*km_emp,"unit":"km","scope":3,"quality":"Measured"}]))
-        else:
-            qty=st.number_input("Quantity",0.0)
-            if st.button("Add row") and qty>0:
-                code,unit=("paper_kg","kg") if cat=="Paper" else ("water_m3","m³")
-                add_row(pd.DataFrame([{"activity_code":code,"quantity":qty,"unit":unit,"scope":3,"quality":"Measured"}]))
+# ------------------- Dashboard -------------------
 
-    # live data
-    st.dataframe(st.session_state.df) if not st.session_state.df.empty else st.info("No rows yet.")
+def dashboard():
+    st.title("GHG Emission Dashboard")
+    all_data = []
+    for scope in [1, 2, 3]:
+        data = st.session_state.get(f"scope{scope}_data")
+        if data is not None:
+            data["Scope"] = f"Scope {scope}"
+            all_data.append(data)
 
-else:  # Results
-    st.title("Results")
-    if st.session_state.df.empty:
-        st.info("No data")
+    if all_data:
+        combined = pd.concat(all_data)
+        total = combined.groupby("Scope")["CO2e"].sum().reset_index()
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("Total Emissions by Scope")
+            st.dataframe(total)
+        with col2:
+            fig = px.pie(total, names="Scope", values="CO2e", title="Scope Contribution")
+            st.plotly_chart(fig)
+
+        line = combined.groupby(["Activity Type"])["CO2e"].sum().reset_index()
+        fig2 = px.bar(line, x="Activity Type", y="CO2e", title="Emissions by Activity")
+        st.plotly_chart(fig2)
     else:
-        res=enrich(st.session_state.df); st.dataframe(res)
-        summ=res.groupby(["scope","quality"],as_index=False)["tCO2e"].sum()
-        if not summ.empty:
-            st.bar_chart(summ.pivot(index="scope",columns="quality",values="tCO2e"))
-        export(side=False)
+        st.info("Please input data for at least one scope")
+
+# ------------------- Report Generator -------------------
+
+def generate_report():
+    st.title("Download Report")
+    if st.button("Generate PDF"):
+        c = canvas.Canvas("GHG_Report.pdf", pagesize=A4)
+        c.drawString(100, 800, f"Company: {st.session_state['company']['name']}")
+        c.drawString(100, 780, f"Reporting Year: {st.session_state['company']['year']}")
+        c.drawString(100, 760, "GHG Emissions Summary")
+        y = 740
+        for scope in [1, 2, 3]:
+            df = st.session_state.get(f"scope{scope}_data")
+            if df is not None:
+                total = df["CO2e"].sum()
+                c.drawString(100, y, f"Scope {scope}: {total:.2f} tonnes CO2e")
+                y -= 20
+        c.save()
+        with open("GHG_Report.pdf", "rb") as f:
+            st.download_button("Download Report", f, file_name="GHG_Report.pdf")
+
+# ------------------- Routing -------------------
+
+def main():
+    if "authenticated" not in st.session_state:
+        login()
+        return
+
+    menu = [
+        "Dashboard",
+        "Company Profile",
+        "Scope 1",
+        "Scope 2",
+        "Scope 3",
+        "Generate Report"
+    ]
+    choice = st.sidebar.selectbox("Navigation", menu)
+
+    if choice == "Dashboard":
+        dashboard()
+    elif choice == "Company Profile":
+        company_profile()
+    elif choice == "Scope 1":
+        input_scope(1)
+    elif choice == "Scope 2":
+        input_scope(2)
+    elif choice == "Scope 3":
+        input_scope(3)
+    elif choice == "Generate Report":
+        generate_report()
+
+if __name__ == "__main__":
+    main()
