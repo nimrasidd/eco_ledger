@@ -55,16 +55,21 @@ def input_scope(scope):
         unit = st.text_input("Unit", value="liters")
         quantity = st.number_input("Quantity", min_value=0.0, value=0.0)
         emission_factor = st.number_input("Emission Factor", min_value=0.0, value=2.68)
-        if st.button(f"Calculate Scope {scope}"):
-            df = pd.DataFrame({
+        if st.button(f"Add Activity to Scope {scope}"):
+            new_row = pd.DataFrame({
                 "Activity Type": [activity],
                 "Unit": [unit],
                 "Quantity": [quantity],
                 "Emission Factor": [emission_factor],
             })
-            df["CO2e"] = df["Quantity"] * df["Emission Factor"]
-            st.session_state[f"scope{scope}_data"] = df
-            st.success("Calculated Successfully")
+            new_row["CO2e"] = new_row["Quantity"] * new_row["Emission Factor"]
+            # Append to existing data if present
+            key = f"scope{scope}_data"
+            if key in st.session_state and st.session_state[key] is not None:
+                st.session_state[key] = pd.concat([st.session_state[key], new_row], ignore_index=True)
+            else:
+                st.session_state[key] = new_row
+            st.success("Activity added successfully!")
         # Show current scope data if available
         if st.session_state.get(f"scope{scope}_data") is not None:
             st.dataframe(st.session_state[f"scope{scope}_data"])
