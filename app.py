@@ -4,6 +4,14 @@ import plotly.express as px
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 
+
+def main():
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+    if "company" not in st.session_state:
+        st.session_state.company = {}
+    # Rest of your main function
+
 # ------------------- Auth & Session -------------------
 
 def login():
@@ -42,16 +50,24 @@ def input_scope(scope):
 
     with tab1:
         st.subheader("Manual Data Entry")
-        df = st.data_editor(pd.DataFrame({
-            "Activity Type": ["Diesel"],
-            "Unit": ["liters"],
-            "Quantity": [0],
-            "Emission Factor": [2.68],
-        }), num_rows="dynamic")
+        activity_options = ["Diesel", "Petrol", "Electricity", "Natural Gas", "Other"]
+        activity = st.selectbox("Activity Type", activity_options)
+        unit = st.text_input("Unit", value="liters")
+        quantity = st.number_input("Quantity", min_value=0.0, value=0.0)
+        emission_factor = st.number_input("Emission Factor", min_value=0.0, value=2.68)
         if st.button(f"Calculate Scope {scope}"):
+            df = pd.DataFrame({
+                "Activity Type": [activity],
+                "Unit": [unit],
+                "Quantity": [quantity],
+                "Emission Factor": [emission_factor],
+            })
             df["CO2e"] = df["Quantity"] * df["Emission Factor"]
             st.session_state[f"scope{scope}_data"] = df
             st.success("Calculated Successfully")
+        # Show current scope data if available
+        if st.session_state.get(f"scope{scope}_data") is not None:
+            st.dataframe(st.session_state[f"scope{scope}_data"])
 
     with tab2:
         uploaded = st.file_uploader("Upload Excel/CSV")
@@ -71,6 +87,7 @@ def dashboard():
     for scope in [1, 2, 3]:
         data = st.session_state.get(f"scope{scope}_data")
         if data is not None:
+            data = data.copy()  # Make a copy before modifying
             data["Scope"] = f"Scope {scope}"
             all_data.append(data)
 
@@ -119,27 +136,26 @@ def main():
         login()
         return
 
-    menu = [
-        "Dashboard",
-        "Company Profile",
-        "Scope 1",
-        "Scope 2",
-        "Scope 3",
-        "Generate Report"
-    ]
-    choice = st.sidebar.selectbox("Navigation", menu)
+    st.sidebar.title("Eco Ledger Navigation")
 
-    if choice == "Dashboard":
+    main_menu = st.sidebar.radio("Main Menu", ["Dashboard", "Company Profile", "Scopes", "Generate Report"])
+
+    if main_menu == "Dashboard":
         dashboard()
-    elif choice == "Company Profile":
+
+    elif main_menu == "Company Profile":
         company_profile()
-    elif choice == "Scope 1":
-        input_scope(1)
-    elif choice == "Scope 2":
-        input_scope(2)
-    elif choice == "Scope 3":
-        input_scope(3)
-    elif choice == "Generate Report":
+
+    elif main_menu == "Scopes":
+        scope_option = st.sidebar.radio("Select Scope", ["Scope 1", "Scope 2", "Scope 3"])
+        if scope_option == "Scope 1":
+            input_scope(1)
+        elif scope_option == "Scope 2":
+            input_scope(2)
+        elif scope_option == "Scope 3":
+            input_scope(3)
+
+    elif main_menu == "Generate Report":
         generate_report()
 
 if __name__ == "__main__":
